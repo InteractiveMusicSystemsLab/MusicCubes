@@ -1,0 +1,1 @@
+The Music Cubes folder contains all of our files from the term
