@@ -8,9 +8,6 @@ BLEFloatCharacteristic accelCharX("0099b53a-b473-11ed-afa1-0242ac120002", BLERea
 BLEFloatCharacteristic accelCharY("0099b8a0-b473-11ed-afa1-0242ac120002", BLERead | BLENotify);
 BLEFloatCharacteristic accelCharZ("0099ba12-b473-11ed-afa1-0242ac120002", BLERead | BLENotify);
 
-
-
-
 void setup() {
   // Serial.begin(9600);
   // while (!Serial)

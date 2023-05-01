@@ -19,7 +19,6 @@
  * - https://learn.adafruit.com/wireless-untztrument-using-ble-midi/ble-midi-setup
  */
 
-
 #include <Arduino.h>
 #include <bluefruit.h>
 #include <MIDI.h>
@@ -27,22 +26,25 @@
 #include <MadgwickAHRS.h>
 #include <base64.hpp>
 
-#define CC_YAW 70
-#define CC_PITCH 71
-#define CC_ROLL 72
+#define CC_YAW 0
+#define CC_PITCH 1
+#define CC_ROLL 2
+#define CC_CHANGE_CHANNEL 55
 #define MIDI_DICE 59
+#define SYSEX_BUFFER_SIZE 1024
 
 BLEDis bledis;
 BLEMidi blemidi;
 LSM6DS3 imu(I2C_MODE, 0x6A);
-
+BLEUart bleuart;
 // initialize a Madgwick filter:
 Madgwick filter;
 // sensor's sample rate is fixed at:
 const int sensorRate = 104;
 const float gyroThresh = 0.15;
 const float accelThresh = 0.013;
-int channel = 1; // this can change if interference detected
+const int initialDetectTime = 1000; // time to allow CC signals from other cubes to prevent interference.
+int channel = 2;  // this can change if interference detected
 unsigned long microsPerReading, microsPrevious;
 
 // Create a new instance of the Arduino MIDI Library,
@@ -53,7 +55,7 @@ void setup() {
   Serial.begin(115200);
 
   unsigned long start_time = millis();
-  while (!Serial && (millis() - start_time < 5000)) {
+  while (!Serial && (millis() - start_time < 1000)) {
     delay(10);
   }
 
@@ -62,12 +64,10 @@ void setup() {
   memcpy(uid, (const void *)NRF_FICR->DEVICEADDR, sizeof(uid));
   unsigned char unique_string[11];
   encode_base64(uid, sizeof(uid), unique_string);
+  unique_string[9] = '\0';
   unique_string[10] = '\0';
   // Print the unique string
   Serial.println((char *)unique_string);
-
-
-
 
   Serial.println("Adafruit Bluefruit52 MIDI over Bluetooth LE Example");
 
@@ -98,9 +98,8 @@ void setup() {
   // Do the same for MIDI Note Off messages.
   MIDI.setHandleNoteOff(handleNoteOff);
 
-  MIDI.setHandleControlChange(handleControlChange);
+  // MIDI.setHandleControlChange(handleControlChange);
 
-  MIDI.setHandleSystemExclusive()
 
   // Set up and start advertising
   startAdv((char *)unique_string);
@@ -108,17 +107,17 @@ void setup() {
   // Start MIDI read loop
   Scheduler.startLoop(midiRead);
 
-  imu.settings.gyroEnabled = 1;              //Can be 0 or 1
-  imu.settings.gyroRange = 2000;             //Max deg/s.  Can be: 125, 245, 500, 1000, 2000
-  imu.settings.gyroSampleRate = sensorRate;  //Hz.  Can be: 13, 26, 52, 104, 208, 416, 833, 1666
-  imu.settings.gyroBandWidth = 200;          //Hz.  Can be: 50, 100, 200, 400;
+  imu.settings.gyroEnabled = 1;              // Can be 0 or 1
+  imu.settings.gyroRange = 2000;             // Max deg/s.  Can be: 125, 245, 500, 1000, 2000
+  imu.settings.gyroSampleRate = sensorRate;  // Hz.  Can be: 13, 26, 52, 104, 208, 416, 833, 1666
+  imu.settings.gyroBandWidth = 200;          // Hz.  Can be: 50, 100, 200, 400;
   // imu.settings.gyroFifoEnabled = 1;  //Set to include gyro in FIFO
   // imu.settings.gyroFifoDecimation = 1;  //set 1 for on /1
 
   imu.settings.accelEnabled = 1;
-  imu.settings.accelRange = 2;                //Max G force readable.  Can be: 2, 4, 8, 16
-  imu.settings.accelSampleRate = sensorRate;  //Hz.  Can be: 13, 26, 52, 104, 208, 416, 833, 1666, 3332, 6664, 13330
-  imu.settings.accelBandWidth = 200;          //Hz.  Can be: 50, 100, 200, 400;
+  imu.settings.accelRange = 2;                // Max G force readable.  Can be: 2, 4, 8, 16
+  imu.settings.accelSampleRate = sensorRate;  // Hz.  Can be: 13, 26, 52, 104, 208, 416, 833, 1666, 3332, 6664, 13330
+  imu.settings.accelBandWidth = 200;          // Hz.  Can be: 50, 100, 200, 400;
   // imu.settings.accelFifoEnabled = 1;  //Set to include accelerometer in the FIFO
   // imu.settings.accelFifoDecimation = 1;  //set 1 for on /1
   imu.settings.tempEnabled = 1;
@@ -130,9 +129,6 @@ void setup() {
   // initialize variables to pace updates to correct rate
   microsPerReading = 1000000 / sensorRate;
   microsPrevious = micros();
-
-  discoverCubes();
-
 }
 
 void startAdv(char *unique_string) {
@@ -156,14 +152,14 @@ void startAdv(char *unique_string) {
   Bluefruit.ScanResponse.addName();
 
   /* Start Advertising
-   * - Enable auto advertising if disconnected
-   * - Interval:  fast mode = 20 ms, slow mode = 152.5 ms
-   * - Timeout for fast mode is 30 seconds
-   * - Start(timeout) with timeout = 0 will advertise forever (until connected)
-   *
-   * For recommended advertising interval
-   * https://developer.apple.com/library/content/qa/qa1931/_index.html   
-   */
+	 * - Enable auto advertising if disconnected
+	 * - Interval:  fast mode = 20 ms, slow mode = 152.5 ms
+	 * - Timeout for fast mode is 30 seconds
+	 * - Start(timeout) with timeout = 0 will advertise forever (until connected)
+	 *
+	 * For recommended advertising interval
+	 * https://developer.apple.com/library/content/qa/qa1931/_index.html
+	 */
   Bluefruit.Advertising.restartOnDisconnect(true);
   Bluefruit.Advertising.setInterval(32, 244);  // in unit of 0.625 ms
   Bluefruit.Advertising.setFastTimeout(30);    // number of seconds in fast mode
@@ -172,21 +168,23 @@ void startAdv(char *unique_string) {
 
 void handleNoteOn(byte channel, byte pitch, byte velocity) {
   // Log when a note is pressed.
-  Serial.printf("Note on: channel = %d, pitch = %d, velocity - %d", channel, pitch, velocity);
-  Serial.println();
+  // Serial.printf("Note on: channel = %d, pitch = %d, velocity - %d", channel, pitch, velocity);
+  // Serial.println();
 }
 
 void handleNoteOff(byte channel, byte pitch, byte velocity) {
   // Log when a note is released.
-  Serial.printf("Note off: channel = %d, pitch = %d, velocity - %d", channel, pitch, velocity);
+  // Serial.printf("Note off: channel = %d, pitch = %d, velocity - %d", channel, pitch, velocity);
+  // Serial.println();
+}
+
+void handleControlChange(byte ccChannel, byte control, byte value) {
+  Serial.printf("cc: channel = %d, pitch = %d, velocity - %d", ccChannel, control, value);
   Serial.println();
+  if (control == CC_CHANGE_CHANNEL) {
+    channel = ccChannel;
+  }
 }
-
-void handleControlChange(byte channel, byte control, byte value) {
-
-
-}
-
 
 // Set up filter coefficients (adjust as needed)
 float alpha = 1;
@@ -209,9 +207,12 @@ int stillCounter = 0;
 int movingCounter = 0;
 bool isMoving;
 int lastDice = 0;
+bool sendingMidi = false;
+uint32_t lastNotConnectedTime = 0;
 void loop() {
   // Don't continue if we aren't connected.
   if (!Bluefruit.connected()) {
+    lastNotConnectedTime = millis();
     return;
   }
 
@@ -224,11 +225,12 @@ void loop() {
   float ax, ay, az;  // Acceleration readings
   float gx, gy, gz;  // Gyroscope readings
 
-
-
-
   // check if it's time to read data and update the filter
   microsNow = micros();
+  if (!sendingMidi && millis() - lastNotConnectedTime > initialDetectTime) {
+    sendingMidi = true;
+    Serial.println("NOW SENDING MIDI");
+  }
 
   // check if the IMU is ready to read:
   if (microsNow - microsPrevious >= microsPerReading) {
@@ -260,14 +262,17 @@ void loop() {
     float delta_gz = absolute_difference(gz, prev_gz);
 
     // Update the previous values.
-    prev_ax = ax; prev_ay = ay; prev_az = az;
-    prev_gx = gx; prev_gy = gy; prev_gz = gz;
+    prev_ax = ax;
+    prev_ay = ay;
+    prev_az = az;
+    prev_gx = gx;
+    prev_gy = gy;
+    prev_gz = gz;
 
-     // Calculate the magnitudes of the change in acceleration and angular velocity.
+    // Calculate the magnitudes of the change in acceleration and angular velocity.
     float delta_accel_magnitude = magnitude(delta_ax, delta_ay, delta_az);
     float delta_gyro_magnitude = magnitude(delta_gx, delta_gy, delta_gz);
 
-    // Print the magnitudes to the serial monitor.
     bool nowMoving = false;
     if (delta_accel_magnitude < accelThresh && delta_gyro_magnitude < gyroThresh) {
       nowMoving = false;
@@ -277,7 +282,7 @@ void loop() {
 
     if (nowMoving) {
       stillCounter = 0;
-      movingCounter++;      
+      movingCounter++;
     } else {
       movingCounter = 0;
       stillCounter++;
@@ -288,22 +293,24 @@ void loop() {
       movingCounter = 0;
       // Serial.println("STILL");
       int pitch = MIDI_DICE + calculateDice(ax, ay, az);
-      MIDI.sendNoteOn(pitch, 60, channel);
-      lastDice = pitch;
+      if (sendingMidi && pitch != lastDice) {
+        MIDI.sendNoteOn(pitch, 60, channel);
+        lastDice = pitch;
+      }
       
     } else if (movingCounter > 10 && !isMoving) {
       isMoving = true;
       stillCounter = 0;
       Serial.println("MOVING");
     }
-    
-     
+
     outputH = (int)((heading / 180.0 + 1) / 2 * 127);
     outputR = (int)((roll / 180.0 + 1) / 2 * 127);
     outputP = (int)((pitch / 180.0 + 1) / 2 * 127);
-    if (isMoving) {
+    if (isMoving && sendingMidi) {
       if (lastDice != 0) {
         MIDI.sendNoteOff(lastDice, 0, channel);
+        lastDice = 0;
       }
       if (outputH != prevOutputH) {
         prevOutputH = outputH;
@@ -319,21 +326,7 @@ void loop() {
       }
     }
   }
-  // double angle = 5.0;
-  // int value1 = (int)((angle1/PI+1.0)/2*127);
-  // int value2 = (int)((angle2/PI+1.0)/2*127);
-  
-  // if (value1 != prevValue1) {
-  //   MIDI.sendControlChange(0,(int)value1, 1);
-  //   prevValue1 = value1;
-  // }
-  // if (value2 != prevValue2) {
-  //   MIDI.sendControlChange(0,(int)value2, 1);
-  //   prevValue2 = value2;
-  // }
-
-
-
+  // midiRead should be run as often as possible
   midiRead();
 }
 
@@ -359,7 +352,6 @@ float absolute_difference(float a, float b) {
 
 int calculateDice(float x, float y, float z) {
   const float threshold = 0.8;
-
   if (x > threshold) {
     return 1;
   } else if (x < -threshold) {
@@ -378,10 +370,43 @@ int calculateDice(float x, float y, float z) {
   }
 }
 
-
 // Function to calculate the magnitude of a vector.
 float magnitude(float x, float y, float z) {
   return sqrt(x * x + y * y + z * z);
 }
 
 
+byte sysexBuffer[SYSEX_BUFFER_SIZE];
+uint16_t sysexIndex = 0;
+bool sysexActive = false;
+
+// ableton doesn't route SysEx back to other cubes so doesn't work
+// void handleSysEx(byte* sysex, uint16_t length, bool complete) {
+//   if (complete) {
+//     // Add the last chunk of the SysEx message to the buffer
+//     memcpy(&sysexBuffer[sysexIndex], sysex, length);
+//     sysexIndex += length;
+//     sysexActive = false;
+//     // Call the function to process the complete SysEx message
+//     processSysEx(sysexBuffer, sysexIndex);
+//     // Reset the buffer and index for the next message
+//     memset(sysexBuffer, 0, SYSEX_BUFFER_SIZE);
+//     sysexIndex = 0;
+//   } else {
+//     // Add the current chunk of the SysEx message to the buffer
+//     memcpy(&sysexBuffer[sysexIndex], sysex, length);
+//     sysexIndex += length;
+//     sysexActive = true;
+//   }
+// }
+
+// void processSysEx(byte* sysex, unsigned int length) {
+//   // Process the complete SysEx message
+//   // For example, print the data to the serial monitor
+//   Serial.println("SysEx message received:");
+//   for (int i = 0; i < length; i++) {
+//     Serial.print(sysex[i], HEX);
+//     Serial.print(" ");
+//   }
+//   Serial.println();
+// }

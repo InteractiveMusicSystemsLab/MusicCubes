@@ -25,7 +25,8 @@ async def main():
 
     print(PyObjCTools.KeyValueCoding.getKey(myDevice.details, 'identifier'))
 
-    address = str(PyObjCTools.KeyValueCoding.getKey(myDevice.details, 'identifier')[0])
+    address = str(PyObjCTools.KeyValueCoding.getKey(
+        myDevice.details, 'identifier')[0])
     async with BleakClient(address) as client:
         # svcs = await client.get_services()
         # for service in svcs:
