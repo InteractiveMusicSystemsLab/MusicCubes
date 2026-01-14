@@ -16,3 +16,10 @@ the other work from D23 team is contained in the D23 folder.
 -  **base64** by Densaugeo
 -  **Madgwick** by Arduino
 -  **ArduinoBLE** by Arduino
+
+
+## Contributing
+
+Navigate to the [CONTRIBUTING.md](./CONTRIBUTING.md) file for guidelines on how to contribute to the project.
+
+Music, audio, and other creative works produced using Music Cubes are not considered Contributions and remain the sole property of their creators.
